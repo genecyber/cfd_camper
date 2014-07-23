@@ -12,18 +12,19 @@ headers = config.HEADERS
 auth = config.AUTH
 UNIT = 10**8
 FEE_PER_KB=20000 #Increase our chance of getting into the block on time
-FEED_ADDRESS = 'n3HFSdueD43w7tF48qfExZNykfrrVR2Yf9' #Feed Address to Camp
-MIN_TARGET_SIZE = 10 * UNIT #Minimum wager amount of target bet
+FEED_ADDRESS = '1E7qexXyupzYqx9R6rbUt2PciyTZ35MBDf' #Feed Address to Camp
+MIN_TARGET_SIZE = 8 * UNIT #Minimum wager amount of target bet
 MIN_ATTACK_DISTANCE = 900 #in seconds, time before next broadcast to start attack
-MIN_ATTACK_SIZE = 1.5 #minimum normalized difference between broadcasts to attack for
-SAFETY_CONSTANT= 2.5 #Adjust for how much the price might change between the matching attack and the broadcast block for small differences
+MIN_ATTACK_SIZE = .75 #minimum normalized difference between broadcasts to attack for
+SAFETY_CONSTANT= .9 #Adjust for how much the price might change between the matching attack and the broadcast block for small differences
 SAFETY_RATIO = .75 #percent based adjustment for large movements
-SAFETY_THRESHOLD = 8 #Threshold for switching between safety_constant and safety_ratio
-MY_ADDRESSES = ['mhtp9Fpt1Citcfhua34DrhZQMTwMF2qS7V', 'moSG49871W5D1CmscFJjJgYyH2BnFwLpJD', 'mtAMogTagoRwJkcDxduBY8iMnxxehofqrX', 'n4No9RNhAGmkJT54LmcsenagfrGXbvm8r6', 'msRd43qcfz7vfmRAJks2f58caiSzS94Hoa', 'mrwDQYWweppb7siEDm7w2sbjpBDWX7gEJm']
+SAFETY_THRESHOLD = 6 #Threshold for switching between safety_constant and safety_ratio
+MY_ADDRESSES = ['19r2xo2iZ8UzxxgvjVcXkVFw7GhypQLnxF','1A6pex2MMEqJtRdwGPwZmEQLJ7Jw65QCBz', '1GwusE6uPNpjNUxV3LoZCwEsdY93mbyoxp', '1FvrgmfKAr3Uc7KeACMk6DFwbJggXR8FxV', '1CFD35UfrKn92rnHQZj213Be9qjBssEEr3']#['mhtp9Fpt1Citcfhua34DrhZQMTwMF2qS7V', 'moSG49871W5D1CmscFJjJgYyH2BnFwLpJD', 'mtAMogTagoRwJkcDxduBY8iMnxxehofqrX', 'n4No9RNhAGmkJT54LmcsenagfrGXbvm8r6', 'msRd43qcfz7vfmRAJks2f58caiSzS94Hoa', 'mrwDQYWweppb7siEDm7w2sbjpBDWX7gEJm']
 LAST_BROADCAST = None 
 LAST_BROADCAST_TIMESTAMP= None
-CAST_INTERVAL = 3600 #Either gotten from enhanced info or established manually
+CAST_INTERVAL = 7200 #Either gotten from enhanced info or established manually
 BET_TYPE_NAME = {0: 'Bull', 1: 'Bear'}
+USE_LOCAL_TIMESTAMP = True #use Timestamp from when the broadcast is received, or the one contained in the broadcast
 
 
 F = fractions.Fraction
@@ -65,15 +66,21 @@ def getLastBroadcast():
 
 #for Estimating the value of the next broadcast #Must be tailored to the specific Feed
 def getRealTimePrice(): 
-    price,timestamp = btcTicker() 
+    price, timestamp = bitstampTicker()  #ticker to Use
     return price 
     
 def btcTicker():
-        data = json.loads(urllib.request.urlopen('https://api.coindesk.com/v1/bpi/currentprice.json').read().decode('utf-8'))
-        dataPrice= float(data['bpi']['USD']['rate'])
-        dataTime = data['time']['updated']
-        return dataPrice, dataTime    
-
+    data = json.loads(urllib.request.urlopen('https://api.coindesk.com/v1/bpi/currentprice.json').read().decode('utf-8'))
+    dataPrice= float(data['bpi']['USD']['rate'])
+    dataTime = data['time']['updated']
+    return dataPrice, dataTime    
+    
+def bitstampTicker():
+    data = json.loads(urllib.request.urlopen('https://www.bitstamp.net/api/ticker/').read().decode('utf-8'))
+    dataPrice = float(data['last'])
+    dataTime = data['timestamp']
+    return dataPrice, dataTime
+    
 def doBet(params):
     default_params = {'allow_unconfirmed_inputs': True, 'target_value':0}
     params.update(default_params)
@@ -102,8 +109,11 @@ while True:
     last_broadcast = getLastBroadcast()
     if not LAST_BROADCAST or (last_broadcast['tx_hash'] != LAST_BROADCAST['tx_hash']):
         LAST_BROADCAST = last_broadcast
-        initial_value = LAST_BROADCAST['value'] 
-        LAST_BROADCAST_TIMESTAMP = time.time() if LAST_BROADCAST_TIMESTAMP else last_broadcast['timestamp']
+        initial_value = LAST_BROADCAST['value']
+        if USE_LOCAL_TIMESTAMP and LAST_BROADCAST_TIMESTAMP: 
+            LAST_BROADCAST_TIMESTAMP = time.time()
+        else: 
+            LAST_BROADCAST_TIMESTAMP = last_broadcast['timestamp']
         logging.info("Added New Broadcast, Value: {0}, Time: {1}".format(initial_value, time.ctime(LAST_BROADCAST_TIMESTAMP)))
     current_time = time.time()
     estimate_till_next_broadcast = (CAST_INTERVAL - (current_time - LAST_BROADCAST_TIMESTAMP ))
@@ -147,26 +157,29 @@ while True:
             target_tracked[target['tx_hash']] = {'timestamp': time.time(), 'estimated_wager_remaining': target['wager_remaining']}
         print("target_wager_remaining %s" %target_tracked[target['tx_hash']]['estimated_wager_remaining'])
         while target_tracked[target['tx_hash']]['estimated_wager_remaining'] >= 0:
-        #if True:
             time.sleep(2) 
             target_inverse_odds = F(target['counterwager_quantity']/ target['wager_quantity']) 
-            if target_tracked[target['tx_hash']]['estimated_wager_remaining'] > safe_difference * UNIT:
-                wager_quantity = round((safe_difference * UNIT) * target_inverse_odds)
-                counterwager_quantity = round((safe_difference * UNIT))
+            normalized_leverage = target['leverage']/ 5040.0
+            if target_tracked[target['tx_hash']]['estimated_wager_remaining'] > abs(safe_difference * UNIT * normalized_leverage):
+                wager_quantity = abs(round((safe_difference * UNIT) * target_inverse_odds * normalized_leverage))
+                counterwager_quantity = abs(round((safe_difference * UNIT * normalized_leverage)))
             else: 
-                wager_quantity = round(target_tracked[target['tx_hash']]['estimated_wager_remaining'] * target_inverse_odds)
-                counterwager_quantity = round(target_tracked[target['tx_hash']]['estimated_wager_remaining'])
+                wager_quantity = abs(round(target_tracked[target['tx_hash']]['estimated_wager_remaining'] * target_inverse_odds * normalized_leverage))
+                counterwager_quantity = abs(round(target_tracked[target['tx_hash']]['estimated_wager_remaining'] * normalized_leverage))
             leverage = target['leverage']
             deadline = target['deadline'] 
             bet_type = 0 if target['bet_type'] == 1 else 1
-            expiration = round((MIN_ATTACK_DISTANCE * 2) / (60* 10))
+            expiration = 2
             source= MY_ADDRESSES.get()
             params = {'fee_per_kb': FEE_PER_KB, 'source': source, 'expiration': expiration, 'bet_type': bet_type, 'deadline': deadline, 'leverage': leverage, 'counterwager_quantity': counterwager_quantity, 'wager_quantity': wager_quantity, 'feed_address': FEED_ADDRESS}
-            #print(params)
+            print(params)
             try:
+                print('trying')
                 tx_hash = doBet(params)['result']
-            except: continue
+            except: 
+                print('EXCEPT')
+                continue
             if tx_hash:
-                target_tracked[target['tx_hash']]['estimated_wager_remaining'] = target_tracked[target['tx_hash']]['estimated_wager_remaining'] - round(safe_difference * UNIT)
+                target_tracked[target['tx_hash']]['estimated_wager_remaining'] = target_tracked[target['tx_hash']]['estimated_wager_remaining'] - abs(round(safe_difference * UNIT))
                 logging.info("ATTACK: Target Address {0}, Estimated wager_remaining {1}, Actual wager_remaining {2}, Wager_quantity {3}".format(target['source'], trim(target_tracked[target['tx_hash']]['estimated_wager_remaining']), trim(target['wager_remaining']), trim(wager_quantity)))
                 logging.info("ATTACK: HASH {}".format(tx_hash))
