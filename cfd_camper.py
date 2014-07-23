@@ -180,6 +180,6 @@ while True:
                 print('EXCEPT')
                 continue
             if tx_hash:
-                target_tracked[target['tx_hash']]['estimated_wager_remaining'] = target_tracked[target['tx_hash']]['estimated_wager_remaining'] - abs(round(safe_difference * UNIT))
+                target_tracked[target['tx_hash']]['estimated_wager_remaining'] = target_tracked[target['tx_hash']]['estimated_wager_remaining'] - wager_quantity
                 logging.info("ATTACK: Target Address {0}, Estimated wager_remaining {1}, Actual wager_remaining {2}, Wager_quantity {3}".format(target['source'], trim(target_tracked[target['tx_hash']]['estimated_wager_remaining']), trim(target['wager_remaining']), trim(wager_quantity)))
                 logging.info("ATTACK: HASH {}".format(tx_hash))
